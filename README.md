@@ -15,7 +15,7 @@ To run this project, you will need to create a `.env` file in the root directory
 
 ```
 TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
-DB_CLIENT=pg
+DB_CLIENT=supabase/sqlite
 DATABASE_URL=YOUR_DATABASE_URL
 ```
 
