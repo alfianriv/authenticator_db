@@ -1,11 +1,9 @@
 const db = require("../setup/db");
 const otpauth = require("otpauth");
-const Jimp = require("jimp");
-const QrCode = require("qrcode-reader");
-const request = require("request");
-const url = require("url");
 const { and, eq } = require("drizzle-orm");
 const { users } = require("../setup/db/schema");
+const axios = require("axios");
+const { decompileQrCodeFromBuffer } = require("../helpers/image/decompile-qrcode");
 
 // In-memory store for user states
 const userState = {};
@@ -109,82 +107,32 @@ module.exports = (bot) => {
     }
   }
 
-  function handleSecretStep(bot, msg) {
+  async function handleSecretStep(bot, msg) {
     const chatId = msg.chat.id;
 
     if (msg.photo) {
       const photo = msg.photo[msg.photo.length - 1];
       const fileId = photo.file_id;
 
-      bot
-        .getFileLink(fileId)
-        .then((link) => {
-          request({ url: link, encoding: null }, (err, resp, buffer) => {
-            if (err) {
-              console.error(err);
-              bot.sendMessage(chatId, "Failed to download the image.");
-              delete userState[chatId];
-              return;
-            }
+      const fileLink = await bot.getFileLink(fileId);
 
-            Jimp.read(buffer, (err, image) => {
-              if (err) {
-                console.error(err);
-                bot.sendMessage(chatId, "Failed to process the image.");
-                delete userState[chatId];
-                return;
-              }
+      const response = await axios({
+        method: "get",
+        url: fileLink,
+        responseType: "arraybuffer",
+      });
 
-              const qr = new QrCode();
-              qr.callback = (err, value) => {
-                if (err) {
-                  console.error(err);
-                  bot.sendMessage(
-                    chatId,
-                    "Could not decode QR code from the image. Please try again or enter the secret manually."
-                  );
-                  return;
-                }
+      const imageBuffer = response.data;
 
-                if (value && value.result) {
-                  try {
-                    const otpUrl = new url.URL(value.result);
-                    const secret = otpUrl.searchParams.get("secret");
-
-                    if (!secret) {
-                      bot.sendMessage(
-                        chatId,
-                        "Could not find a secret in the QR code. Please try again or enter the secret manually."
-                      );
-                      return;
-                    }
-                    saveSecret(bot, msg, secret);
-                  } catch (e) {
-                    bot.sendMessage(
-                      chatId,
-                      "The QR code does not contain a valid OTP Auth URL. Please try again or enter the secret manually."
-                    );
-                    console.error(e);
-                  }
-                } else {
-                  bot.sendMessage(
-                    chatId,
-                    "No QR code found in the image. Please try again or enter the secret manually."
-                  );
-                }
-              };
-              qr.decode(image.bitmap);
-            });
-          });
-        })
-        .catch((err) => {
-          console.error(err);
-          bot.sendMessage(
-            chatId,
-            "An error occurred while fetching the image file."
-          );
-          delete userState[chatId];
-        });
+      try {
+        const decodedText = await decompileQrCodeFromBuffer(imageBuffer);
+        await saveSecret(bot, msg, decodedText);
+        delete userState[chatId];
+      } catch (error) {
+        console.error(error);
+        bot.sendMessage(chatId, "Invalid QR code.");
+        delete userState[chatId];
+      }
     } else if (msg.text) {
       const secret = msg.text;
       saveSecret(bot, msg, secret);
